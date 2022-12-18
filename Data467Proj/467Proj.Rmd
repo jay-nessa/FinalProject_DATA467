@@ -1,0 +1,215 @@
+---
+title: "Data 467 Project Code"
+author: "Zach Kramer"
+date: "2022-10-30"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r,include=FALSE}
+library(dplyr)
+```
+
+
+## Data Cleanup
+```{r}
+# Reads in data
+main <- read.csv("./anime_table.csv")
+dubbed <- read.csv("./anime_dubbed.csv")
+ranking <- read.csv("./anime_ranking_table.csv")
+
+# Cleans some of the unused large columns
+main <- subset(main, select = -c(main_picture.medium, main_picture.large, alternative_titles.ja, alternative_titles.en, synopsis, nsfw, synonyms, alternative_title))
+
+# Selects data where tm_ky == 11, the most recent data capture from the dataset
+main <- main[main$tm_ky==11, ]
+ranking <- ranking[ranking$tm_ky==11, ]
+```
+
+## Data Editing
+```{r}
+# Merges all tables together, 2nd is a Left Join
+full <- merge(main, ranking, by = "mal_id")
+full <- merge(full, dubbed, by = "mal_id", all.x = TRUE)
+```
+
+## Turning Data Numeric
+```{r}
+# Rating into numeric values
+full$rating <- as.factor(full$rating)
+full$rating_num <- unclass(full$rating)
+
+# Turns dub status into 0 or 1, based on if it is dubbed
+full$dub_status_de[full$dub_status_de == "dubbed, partially dubbed"] <- "dubbed"
+full$dub_status_de <- as.factor(full$dub_status_de)
+full$dub_status_num <- unclass(full$dub_status_de)
+full$dub_status_num[is.na(full$dub_status_num)] <- 0
+full$dub_status_num[full$dub_status_num==2] <- 0
+
+# Status into numeric values
+full$status <- as.factor(full$status)
+full$status_num <- unclass(full$status)
+
+# Start  Season into numeric values
+full$start_season.season <- as.factor(full$start_season.season)
+full$start_season.season_num <- unclass(full$start_season.season)
+
+# Studio into numeric values
+full$studios_de <- as.factor(full$studios_de)
+full$studios_num <- unclass(full$studios_de)
+
+final <- subset(full, popularity > 7000)
+final <- na.omit(final)
+```
+
+## Linear Modeling
+```{r}
+lmod <- lm(popularity~mean + rating + start_season.season + num_episodes
+           , data = final)
+#removed variables "status" and "studio" because they were not significant to the model and to improve results and linear modeling in the future 
+summary(lmod)
+```
+
+## Results
+```{r}
+library(ggplot2)
+ggplot(aes(x=mean,y=popularity,color=rating),data=final) + geom_point() + facet_wrap( ~rating) + ggtitle('Scatterplot of Anime Popularity vs. Mean classed by MPAA Rating')
+ggplot(aes(x=mean,y=popularity,color=start_season.season),data=final) + geom_point() + ggtitle('Scatterplot of Anime Popularity vs. Mean classed by Season \nthe First Season Was Released')
+ggplot(data=final)+geom_boxplot(aes(x=mean,y=popularity,group=start_season.season,color=rating))+ggtitle('Boxplot of Anime Popularity vs. Mean Score grouped by the Season \nthe First Season Was Released')
+ggplot(data=final)+geom_boxplot(aes(x=mean,y=popularity,group=rating))+ggtitle('Boxplot of Anime Popularity vs. Mean Score grouped by MPAA Rating')
+ggplot(data=final)+geom_boxplot(aes(x=num_episodes,y=popularity,group=start_season.season))+ggtitle('Boxplot of Anime Popularity vs. Number of Episodes grouped by the Season \nthe First Season Was Released')
+ggplot(data=final)+geom_boxplot(aes(x=num_episodes,y=popularity,group=rating))+ggtitle('Boxplot of Anime Popularity vs. Number of Episodes grouped by MPAA Rating')
+```
+
+
+## Linear Models 
+```{r}
+#written model and coefficients
+
+#linear model with coefficients 
+lmod_interaction <- lm(popularity~(mean + rating + start_season.season + num_episodes)^2, 
+                data = final)
+summary(lmod_interaction)
+```
+
+```{r}
+#residual values
+lmod_r <- resid(lmod)
+#fitted values
+lmod_f <- fitted(lmod)
+
+#residual vs. fitted plot - 
+library(ggplot2)
+ggplot()+geom_point(aes(x=lmod_f,y=lmod_r))+geom_hline(yintercept=0)+xlab('Fitted Values')+ylab('Residual Values')+ggtitle('Residual Plot of the Fitted Values for My Anime List Data')
+plot(lmod,cex=.8,pch=20)
+
+#qq plot 
+qqnorm(lmod_r)
+qqline(lmod_r)
+
+#parallel slope
+#need to include hypotheses and conclusion
+anova(lmod,lmod_interaction)
+#will need to use the full model with significant intercation terms because the slopes are not parallel and some of the interaction terms are significant to the model
+```
+
+*Assumptions*
+Based on the diagnostics completed, one out of the four assumptions have been 
+met completely. 
+The first assumption that is fulfilled is normality of the errors. Based on the 
+QQ plot, our data points seem to follow a normal distribution for the most part. 
+There is a cause for slight concern when looking at the tails; they deviate 
+slightly, but the center of the graph precisely follows the QQ line. 
+Based on the diagnostics, there is cause for concern when it relates to the 
+constant variance and parallel slopes. When looking at the residual plot of the 
+fitted values, there seems to be a degree of heteroscedacity in the error. Even 
+with cleaning the data, the fitted vs. residual values continued to follow the 
+same pattern. This causes limits to our analysis that will discussed later. 
+The other assumption that is not fulfilled is parallel slopes between the full 
+and reduced model. After completing the ANOVA test, we were able to reject the 
+null hypothesis (p-value: <2.2e-16 < 0.05); therefore, we were able to conclude 
+that the model containing the interaction terms does not have parallel slopes 
+with the model without interaction terms. Thus, we are inclined to use a revised
+model that contains the interaction terms that are significant to the model. 
+
+Hypothesis Testing 
+```{r}
+lmod_revised <- lm(popularity~mean + rating + start_season.season + num_episodes + mean*num_episodes + rating*num_episodes + mean*rating, data = final)
+summary(lmod_revised) #will need to explain why interaction terms that were selected were selected 
+
+#mechanics 
+test1 <- lm(popularity~mean + start_season.season + num_episodes + mean*num_episodes, 
+                data = final) #removed "rating"
+anova(lmod_revised, test1)
+
+test2 <- lm(popularity~mean + rating + start_season.season + mean*rating, 
+                data = final) #removed "num_episodes
+anova(lmod_revised, test2)
+```
+
+
+Smaller Model
+```{r}
+#removing start season because it is the only predictor that is not apart of the interaction terms; therefore, we want to determine if removing it helps improve the accuracy of the model 
+small_lmod <- lm(popularity~mean + rating + num_episodes + mean*num_episodes + rating*num_episodes + mean*rating, data = final)
+small_res <- resid(small_lmod)
+small_fit <- fitted(small_lmod)
+ggplot()+geom_point(aes(x=small_fit,y=small_res))+geom_hline(yintercept=0)+xlab('Fitted Values')+ylab('Residual Values')+ggtitle('Residual Plot of the Fitted Values for Anime Data')
+#qqnorm(small_res) + qqline(small_res)
+```
+
+
+F-Test 
+```{r}
+#mechanics
+anova(lmod_revised, small_lmod)
+```
+
+Confidence Interval 
+```{r}
+#(tci<-TukeyHSD(popularity~mean+rating+start_season.season+num_episodes, data = final))
+#plot(tci)
+head(predict(lmod_revised,level=.99,interval='prediction'))
+```
+
+General Linear Model
+```{r}
+#using a mixed effects model because the response variable does not meet the assumptions needed to complete a logistic nor poisson regression 
+
+library(ggplot2)
+#Fixed Effect Model
+options(contrasts=c("contr.sum","contr.poly"))
+lmod_fixed<-lm(popularity~num_episodes + mean + rating, final)
+summary(lmod_fixed)
+
+#Random Effect Model
+library(lme4)
+lmod_mixed<-lmer(popularity~1+(1|start_season.season),final)
+summary(lmod_mixed)
+
+#Large/Overall Model 
+mixed_mod<-lmer(popularity~num_episodes + mean +(1|rating),final)
+summary(mixed_mod)
+
+#Diagnostics 
+revised <- subset(final, num_episodes <= 1000)
+plot(mixed_mod,xlab='Fitted Values (x)',ylab='Residual Values (y)',main='Scatterplot of the Residual Values as a Function of the Fitted Values')
+ggplot(data.frame(mean=final$mean,pearson=residuals(mixed_mod,type="pearson")),
+      aes(x=mean,y=pearson)) +
+    geom_point() 
+ggplot(data.frame(episodes=revised$num_episodes,pearson=residuals(lmer(popularity~1+(1|start_season.season),revised),type="pearson")),
+      aes(x=episodes,y=pearson)) +
+    geom_point() 
+ggplot(data.frame(episodes=final$rating,pearson=residuals(mixed_mod,type="pearson")),
+      aes(x=episodes,y=pearson)) +
+    geom_point() 
+qqnorm(resid(mixed_mod))
+qqline(resid(mixed_mod))
+
+#Inference
+red_mixed <- lmer(popularity~num_episodes + mean + (1+num_episodes|rating),final)
+summary(red_mixed)
+anova(red_mixed,mixed_mod)
+
+revised <- subset(final, num_episodes <= 1000)
+```
